@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "https://gamma-loans-backend.vercel.app/",
+        target: "https://gamma-loans-backend.vercel.app",
         changeOrigin: true,
         secure: false,
       },
