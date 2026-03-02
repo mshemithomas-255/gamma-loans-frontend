@@ -147,7 +147,7 @@ const Loans = ({ darkMode }) => {
 
     try {
       const response = await fetch(
-        `https://tester-server.vercel.app${endpoint}`,
+        `https://gamma-loans-backend.vercel.app${endpoint}`,
         {
           method: editingId ? "PUT" : "POST",
           headers: {
