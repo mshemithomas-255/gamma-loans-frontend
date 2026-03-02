@@ -76,7 +76,7 @@ const Loans = ({ darkMode }) => {
         "https://gamma-loans-backend.vercel.app/api/loans/all",
         {
           headers: { Authorization: `Bearer ${token}` },
-        }
+        },
       );
 
       if (!response.ok) {
@@ -144,10 +144,10 @@ const Loans = ({ darkMode }) => {
     const endpoint = editingId
       ? `/api/loans/update/${editingId}`
       : "/api/loans/apply";
-
+    // rectify the endpoint for update to match the backend route
     try {
       const response = await fetch(
-        `https://tester-server.vercel.app${endpoint}`,
+        `https://gamma-loans-backend.vercel.app${endpoint}`,
         {
           method: editingId ? "PUT" : "POST",
           headers: {
@@ -157,7 +157,7 @@ const Loans = ({ darkMode }) => {
           body: JSON.stringify({
             loanAmount: safeParseNumber(loanData.amount),
           }),
-        }
+        },
       );
 
       const data = await response.json();
@@ -213,7 +213,7 @@ const Loans = ({ darkMode }) => {
           headers: {
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
-        }
+        },
       );
 
       if (!response.ok) throw new Error("Failed to delete loan");
@@ -351,7 +351,7 @@ const Loans = ({ darkMode }) => {
                     >
                       Your limit: Ksh{" "}
                       {safeParseNumber(
-                        limitInfo.maxLoanAmountPerRequest
+                        limitInfo.maxLoanAmountPerRequest,
                       ).toLocaleString()}
                     </p>
                   )}
