@@ -2,9 +2,11 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import imageCompression from "browser-image-compression";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "../../firebase/firebase";
-import { FaEye, FaEyeSlash } from "react-icons/fa"; // Import eye icons
+import { FaEye, FaEyeSlash } from "react-icons/fa";
+import {
+  uploadToCloudinary,
+  validateConfig,
+} from "../../cloudinary/cloudinaryConfig";
 
 const Register = ({ darkMode }) => {
   const navigate = useNavigate();
@@ -22,14 +24,19 @@ const Register = ({ darkMode }) => {
   });
 
   const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false); // State to toggle password visibility
+  const [showPassword, setShowPassword] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({
+    profile: 0,
+    front: 0,
+    back: 0,
+  });
 
   // Handle form field changes
   const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
+    const { name, value } = e.target;
     setFormData({
       ...formData,
-      [name]: type === "checkbox" ? checked : value,
+      [name]: value,
     });
   };
 
@@ -98,80 +105,144 @@ const Register = ({ darkMode }) => {
       return false;
     }
 
+    // Validate file types
+    const allowedTypes = ["image/jpeg", "image/png", "image/jpg", "image/webp"];
+    const validateFile = (file, fieldName) => {
+      if (!allowedTypes.includes(file.type)) {
+        toast.error(`${fieldName} must be a JPEG, PNG, or WebP image`);
+        return false;
+      }
+      return true;
+    };
+
+    if (!validateFile(profilePhoto, "Profile photo")) return false;
+    if (!validateFile(idFrontPhoto, "Front ID photo")) return false;
+    if (!validateFile(idBackPhoto, "Back ID photo")) return false;
+
     return true;
+  };
+
+  // Compress image
+  const compressImage = async (file) => {
+    const options = {
+      maxSizeMB: 1, // Maximum file size in MB
+      maxWidthOrHeight: 800, // Max width/height in pixels
+      useWebWorker: true, // Enable web worker for faster compression
+    };
+
+    try {
+      return await imageCompression(file, options);
+    } catch (error) {
+      console.error("Image compression failed:", error);
+      throw new Error(`Failed to compress image: ${error.message}`);
+    }
   };
 
   // Form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    // Validate Cloudinary configuration
+    if (!validateConfig()) {
+      toast.error(
+        "Cloudinary is not configured properly. Please contact support.",
+      );
+      return;
+    }
+
     if (!validateForm()) return;
 
     setLoading(true);
 
     try {
-      // Compress images
-      const options = {
-        maxSizeMB: 1, // Maximum file size in MB
-        maxWidthOrHeight: 800, // Max width/height in pixels
-        useWebWorker: true, // Enable web worker for faster compression
-      };
+      // Show loading toast
+      toast.loading("Compressing images...", { id: "upload" });
 
+      // Compress images
       let compressedProfile, compressedFront, compressedBack;
 
       try {
         [compressedProfile, compressedFront, compressedBack] =
           await Promise.all([
-            imageCompression(formData.profilePhoto, options),
-            imageCompression(formData.idFrontPhoto, options),
-            imageCompression(formData.idBackPhoto, options),
+            compressImage(formData.profilePhoto),
+            compressImage(formData.idFrontPhoto),
+            compressImage(formData.idBackPhoto),
           ]);
+        toast.success("Images compressed successfully!", { id: "upload" });
       } catch (compressionError) {
-        console.error("Image compression failed:", compressionError);
-        toast.error("Failed to compress images. Please try again.");
+        toast.error("Failed to compress images. Please try again.", {
+          id: "upload",
+        });
         setLoading(false);
         return;
       }
 
-      // Upload images to Firebase
-      const uploadImage = async (file, path) => {
-        try {
-          const storageRef = ref(storage, `gamma/${Date.now()}-${file.name}`);
-          const snapshot = await uploadBytes(storageRef, file);
-          return getDownloadURL(snapshot.ref);
-        } catch (uploadError) {
-          console.error("Firebase upload failed:", uploadError);
-          throw new Error("Failed to upload images. Please try again.");
-        }
-      };
+      // Upload images to Cloudinary with progress tracking
+      toast.loading("Uploading profile photo...", { id: "upload" });
 
-      let profilePhoto, idFrontPhoto, idBackPhoto;
+      let profilePhotoUrl, idFrontPhotoUrl, idBackPhotoUrl;
 
       try {
-        [profilePhoto, idFrontPhoto, idBackPhoto] = await Promise.all([
-          uploadImage(compressedProfile, "profile"),
-          uploadImage(compressedFront, "id-front"),
-          uploadImage(compressedBack, "id-back"),
-        ]);
+        // Upload profile photo
+        const profileResult = await uploadToCloudinary(
+          compressedProfile,
+          "profile",
+          (progress) =>
+            setUploadProgress((prev) => ({ ...prev, profile: progress })),
+        );
+        profilePhotoUrl = profileResult.url;
+        toast.success("Profile photo uploaded!", { id: "upload" });
+
+        // Upload front ID photo
+        toast.loading("Uploading front ID photo...", { id: "upload" });
+        const frontResult = await uploadToCloudinary(
+          compressedFront,
+          "id-front",
+          (progress) =>
+            setUploadProgress((prev) => ({ ...prev, front: progress })),
+        );
+        idFrontPhotoUrl = frontResult.url;
+        toast.success("Front ID photo uploaded!", { id: "upload" });
+
+        // Upload back ID photo
+        toast.loading("Uploading back ID photo...", { id: "upload" });
+        const backResult = await uploadToCloudinary(
+          compressedBack,
+          "id-back",
+          (progress) =>
+            setUploadProgress((prev) => ({ ...prev, back: progress })),
+        );
+        idBackPhotoUrl = backResult.url;
+        toast.success("All photos uploaded successfully!", { id: "upload" });
       } catch (uploadError) {
-        console.error("Firebase upload failed:", uploadError);
-        toast.error(uploadError.message);
+        console.error("Cloudinary upload failed:", uploadError);
+        toast.error(
+          uploadError.message || "Failed to upload images. Please try again.",
+          { id: "upload" },
+        );
         setLoading(false);
         return;
       }
 
-      // Prepare the request payload
+      // Prepare the request payload (excluding file objects)
       const payload = {
-        ...formData,
-        profilePhoto,
-        idFrontPhoto,
-        idBackPhoto,
+        fullName: formData.fullName,
+        email: formData.email,
+        password: formData.password,
+        mobileNumber: formData.mobileNumber,
+        alternateMobileNumber: formData.alternateMobileNumber,
+        idNumber: formData.idNumber,
+        profilePhoto: profilePhotoUrl,
+        idFrontPhoto: idFrontPhotoUrl,
+        idBackPhoto: idBackPhotoUrl,
       };
 
       // Log the payload for debugging
       console.log("Request Payload:", payload);
 
       // Save data to backend (MongoDB)
+      toast.loading("Creating your account...", { id: "register" });
+
       try {
         const response = await fetch(
           "https://gamma-loans-backend.vercel.app/api/users/register",
@@ -179,7 +250,7 @@ const Register = ({ darkMode }) => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
-          }
+          },
         );
 
         // Log the response for debugging
@@ -187,20 +258,28 @@ const Register = ({ darkMode }) => {
         console.log("API Response:", result);
 
         if (response.ok) {
-          toast.success("Registration successful!");
+          toast.success("Registration successful! Please login.", {
+            id: "register",
+          });
           navigate("/login");
         } else {
-          throw new Error(result.error);
+          throw new Error(
+            result.error || result.message || "Registration failed",
+          );
         }
       } catch (apiError) {
         console.error("API request failed:", apiError);
-        toast.error(apiError.message);
+        toast.error(apiError.message, { id: "register" });
       }
     } catch (error) {
       console.error("An unexpected error occurred:", error);
       toast.error("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
+      // Reset progress after 2 seconds
+      setTimeout(() => {
+        setUploadProgress({ profile: 0, front: 0, back: 0 });
+      }, 2000);
     }
   };
 
@@ -219,17 +298,18 @@ const Register = ({ darkMode }) => {
             </span>
           </h1>
           <p className="mb-5 text-xl">
-            We’re excited to have you here. Join our community to access quick,
-            reliable loans tailored to your needs. By registering, you’ll unlock
-            an easy-to-use dashboard where you can manage your loan
-            applications, track your loan status, and enjoy personalized
-            financial services.
+            We&apos;re excited to have you here. Join our community to access
+            quick, reliable loans tailored to your needs. By registering,
+            you&apos;ll unlock an easy-to-use dashboard where you can manage
+            your loan applications, track your loan status, and enjoy
+            personalized financial services.
           </p>
           <p className="mb-5 text-xl">
             Sign up now and take the first step toward securing your financial
             future with us!
           </p>
         </div>
+
         <form onSubmit={handleSubmit} className="md:w-[600px] p-3 w-full">
           {/* Form fields */}
           <div className="mb-2">
@@ -339,15 +419,31 @@ const Register = ({ darkMode }) => {
             />
           </div>
 
+          {/* File upload sections with progress bars */}
           <div className="mb-2">
             <label className="block">Profile photo</label>
             <input
               type="file"
               onChange={(e) => handleFileChange(e, "profilePhoto")}
+              accept="image/jpeg,image/png,image/jpg,image/webp"
               className={`border p-2 w-full ${
                 darkMode ? "bg-gray-700 text-white" : "bg-white text-blue-950"
               }`}
+              disabled={loading}
             />
+            {uploadProgress.profile > 0 && uploadProgress.profile < 100 && (
+              <div className="mt-1">
+                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                  <div
+                    className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress.profile}%` }}
+                  ></div>
+                </div>
+                <p className="text-xs mt-1">
+                  Uploading: {Math.round(uploadProgress.profile)}%
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="mb-2">
@@ -355,10 +451,25 @@ const Register = ({ darkMode }) => {
             <input
               type="file"
               onChange={(e) => handleFileChange(e, "idFrontPhoto")}
+              accept="image/jpeg,image/png,image/jpg,image/webp"
               className={`border p-2 w-full ${
                 darkMode ? "bg-gray-700 text-white" : "bg-white text-blue-950"
               }`}
+              disabled={loading}
             />
+            {uploadProgress.front > 0 && uploadProgress.front < 100 && (
+              <div className="mt-1">
+                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                  <div
+                    className="bg-green-600 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress.front}%` }}
+                  ></div>
+                </div>
+                <p className="text-xs mt-1">
+                  Uploading: {Math.round(uploadProgress.front)}%
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="mb-2">
@@ -366,20 +477,35 @@ const Register = ({ darkMode }) => {
             <input
               type="file"
               onChange={(e) => handleFileChange(e, "idBackPhoto")}
+              accept="image/jpeg,image/png,image/jpg,image/webp"
               className={`border p-2 w-full ${
                 darkMode ? "bg-gray-700 text-white" : "bg-white text-blue-950"
               }`}
+              disabled={loading}
             />
+            {uploadProgress.back > 0 && uploadProgress.back < 100 && (
+              <div className="mt-1">
+                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                  <div
+                    className="bg-purple-600 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress.back}%` }}
+                  ></div>
+                </div>
+                <p className="text-xs mt-1">
+                  Uploading: {Math.round(uploadProgress.back)}%
+                </p>
+              </div>
+            )}
           </div>
 
           <button
             type="submit"
             className={`${
               darkMode ? "bg-blue-600" : "bg-blue-600"
-            } w-full text-white p-2 rounded`}
+            } w-full text-white p-2 rounded disabled:opacity-50 disabled:cursor-not-allowed`}
             disabled={loading}
           >
-            {loading ? "Registering..." : "Register"}
+            {loading ? "Processing..." : "Register"}
           </button>
 
           <div className="mt-3">
